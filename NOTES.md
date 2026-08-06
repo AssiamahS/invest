@@ -1,0 +1,1 @@
+- yahoo /v1/finance/search returns cloudflare 'error code: 1042' (plain text) when fetched from a worker via query1 — query2.finance.yahoo.com works; yfetch falls back automatically. chart meta.chartPreviousClose = close before RANGE start, not yesterday — use regularMarketPreviousClose for daily change.
