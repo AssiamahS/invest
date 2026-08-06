@@ -1,0 +1,10 @@
+name = "invest"
+main = "src/worker.js"
+compatibility_date = "2026-08-01"
+
+[assets]
+directory = "public"
+binding = "ASSETS"
+
+[observability]
+enabled = true

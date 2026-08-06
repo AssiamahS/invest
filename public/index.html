@@ -1,0 +1,334 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>invest — regression analysis for stocks</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%230d1117'/%3E%3Cpath d='M4 24 L12 14 L18 18 L28 6' stroke='%232962ff' stroke-width='3' fill='none' stroke-linecap='round'/%3E%3C/svg%3E">
+<style>
+  :root {
+    --bg: #0d1117; --panel: #151b23; --border: #232b36;
+    --text: #d7dde5; --muted: #7d8896; --accent: #2962ff;
+    --up: #26a69a; --down: #ef5350; --warn: #ffb74d;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: var(--bg); color: var(--text); font: 14px/1.45 -apple-system, "Segoe UI", Roboto, sans-serif; }
+  header { display: flex; align-items: center; gap: 14px; padding: 10px 16px; border-bottom: 1px solid var(--border); flex-wrap: wrap; }
+  header h1 { font-size: 16px; font-weight: 700; letter-spacing: .5px; }
+  header h1 span { color: var(--accent); }
+  .search { position: relative; }
+  .search input { background: var(--panel); border: 1px solid var(--border); color: var(--text); padding: 7px 12px; border-radius: 6px; width: 260px; outline: none; }
+  .search input:focus { border-color: var(--accent); }
+  .dropdown { position: absolute; top: 36px; left: 0; right: 0; background: var(--panel); border: 1px solid var(--border); border-radius: 6px; z-index: 30; max-height: 320px; overflow-y: auto; display: none; }
+  .dropdown div { padding: 8px 12px; cursor: pointer; display: flex; justify-content: space-between; gap: 10px; }
+  .dropdown div:hover { background: #1d2530; }
+  .dropdown small { color: var(--muted); white-space: nowrap; }
+  .quote { display: flex; align-items: baseline; gap: 10px; }
+  .quote .sym { font-size: 18px; font-weight: 700; }
+  .quote .px { font-size: 18px; font-variant-numeric: tabular-nums; }
+  .quote .chg { font-variant-numeric: tabular-nums; }
+  .up { color: var(--up); } .down { color: var(--down); }
+  .controls { display: flex; gap: 6px; margin-left: auto; align-items: center; flex-wrap: wrap; }
+  .controls .label { color: var(--muted); font-size: 12px; margin-left: 8px; }
+  .btn { background: var(--panel); border: 1px solid var(--border); color: var(--muted); padding: 5px 10px; border-radius: 6px; cursor: pointer; font-size: 12px; }
+  .btn.active { color: #fff; background: var(--accent); border-color: var(--accent); }
+  main { display: grid; grid-template-columns: 1fr 320px; gap: 12px; padding: 12px 16px; }
+  @media (max-width: 900px) { main { grid-template-columns: 1fr; } }
+  #chart { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; height: 560px; position: relative; }
+  aside { display: flex; flex-direction: column; gap: 12px; }
+  .card { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 14px; }
+  .card h2 { font-size: 12px; text-transform: uppercase; letter-spacing: 1px; color: var(--muted); margin-bottom: 10px; }
+  .rows div { display: flex; justify-content: space-between; padding: 4px 0; font-variant-numeric: tabular-nums; }
+  .rows div span:first-child { color: var(--muted); }
+  .meter { height: 10px; border-radius: 5px; background: linear-gradient(90deg, var(--down), #666 50%, var(--up)); position: relative; margin: 14px 0 6px; }
+  .meter .pin { position: absolute; top: -5px; width: 4px; height: 20px; background: #fff; border-radius: 2px; transform: translateX(-50%); transition: left .4s; }
+  .verdict { text-align: center; font-size: 17px; font-weight: 700; margin-top: 6px; }
+  table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+  th { color: var(--muted); font-weight: 500; font-size: 12px; text-align: right; padding: 4px 2px; }
+  th:first-child, td:first-child { text-align: left; }
+  td { text-align: right; padding: 4px 2px; border-top: 1px solid var(--border); }
+  #status { position: absolute; inset: 0; display: none; align-items: center; justify-content: center; color: var(--muted); background: rgba(13,17,23,.6); z-index: 20; border-radius: 8px; }
+  footer { color: var(--muted); font-size: 12px; padding: 4px 16px 16px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>in<span>vest</span></h1>
+  <div class="search">
+    <input id="q" placeholder="Search symbol or company…" autocomplete="off" spellcheck="false">
+    <div class="dropdown" id="dd"></div>
+  </div>
+  <div class="quote" id="quote"></div>
+  <div class="controls">
+    <span class="label">Range</span>
+    <button class="btn range" data-r="3mo">3M</button>
+    <button class="btn range active" data-r="1y">1Y</button>
+    <button class="btn range" data-r="2y">2Y</button>
+    <button class="btn range" data-r="5y">5Y</button>
+    <button class="btn range" data-r="max">Max</button>
+    <span class="label">Regression</span>
+    <button class="btn look active" data-l="0">Auto</button>
+    <button class="btn look" data-l="60">60</button>
+    <button class="btn look" data-l="120">120</button>
+    <button class="btn look" data-l="250">250</button>
+    <button class="btn" id="logToggle">Log fit: off</button>
+  </div>
+</header>
+
+<main>
+  <div id="chart"><div id="status">Loading…</div></div>
+  <aside>
+    <div class="card">
+      <h2>Trend verdict</h2>
+      <div class="meter"><div class="pin" id="pin" style="left:50%"></div></div>
+      <div class="verdict" id="verdict">—</div>
+    </div>
+    <div class="card">
+      <h2>Regression channel</h2>
+      <div class="rows" id="stats"></div>
+    </div>
+    <div class="card">
+      <h2>Multi-timeframe regressions</h2>
+      <table>
+        <thead><tr><th>Window</th><th>Slope/yr</th><th>R²</th><th>Trend</th></tr></thead>
+        <tbody id="mtf"></tbody>
+      </table>
+    </div>
+  </aside>
+</main>
+<footer>Linear regression channel (±2σ) with 30-bar projection. Data: Yahoo Finance, ~2 min delay. Not financial advice.</footer>
+
+<script src="https://unpkg.com/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js"></script>
+<script>
+const state = { symbol: "AAPL", range: "1y", lookback: 0, logFit: false, bars: [], barsPerYear: 252 };
+
+const chartEl = document.getElementById("chart");
+const chart = LightweightCharts.createChart(chartEl, {
+  layout: { background: { color: "#151b23" }, textColor: "#7d8896" },
+  grid: { vertLines: { color: "#1c232d" }, horzLines: { color: "#1c232d" } },
+  rightPriceScale: { borderColor: "#232b36" },
+  timeScale: { borderColor: "#232b36", timeVisible: false },
+  crosshair: { mode: LightweightCharts.CrosshairMode.Normal },
+  autoSize: true,
+});
+const candles = chart.addCandlestickSeries({
+  upColor: "#26a69a", downColor: "#ef5350", borderVisible: false,
+  wickUpColor: "#26a69a", wickDownColor: "#ef5350",
+});
+const lineOpts = (color, dashed) => ({
+  color, lineWidth: dashed ? 1 : 2,
+  lineStyle: dashed ? LightweightCharts.LineStyle.Dashed : LightweightCharts.LineStyle.Solid,
+  priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false,
+});
+const midLine = chart.addLineSeries(lineOpts("#2962ff"));
+const upLine  = chart.addLineSeries(lineOpts("rgba(41,98,255,.45)"));
+const loLine  = chart.addLineSeries(lineOpts("rgba(41,98,255,.45)"));
+const midProj = chart.addLineSeries(lineOpts("#2962ff", true));
+const upProj  = chart.addLineSeries(lineOpts("rgba(41,98,255,.45)", true));
+const loProj  = chart.addLineSeries(lineOpts("rgba(41,98,255,.45)", true));
+
+// --- math -------------------------------------------------------------
+function regress(closes, logFit) {
+  const y = logFit ? closes.map(Math.log) : closes;
+  const n = y.length;
+  const xbar = (n - 1) / 2;
+  const ybar = y.reduce((a, b) => a + b, 0) / n;
+  let sxy = 0, sxx = 0, sst = 0;
+  for (let i = 0; i < n; i++) {
+    sxy += (i - xbar) * (y[i] - ybar);
+    sxx += (i - xbar) * (i - xbar);
+    sst += (y[i] - ybar) * (y[i] - ybar);
+  }
+  const slope = sxy / sxx;
+  const intercept = ybar - slope * xbar;
+  let sse = 0;
+  for (let i = 0; i < n; i++) {
+    const r = y[i] - (intercept + slope * i);
+    sse += r * r;
+  }
+  const sigma = Math.sqrt(sse / Math.max(1, n - 2));
+  const r2 = sst === 0 ? 0 : 1 - sse / sst;
+  const fit = (i) => {
+    const v = intercept + slope * i;
+    return logFit ? Math.exp(v) : v;
+  };
+  const band = (i, k) => {
+    const v = intercept + slope * i + k * sigma;
+    return logFit ? Math.exp(v) : v;
+  };
+  return { slope, intercept, sigma, r2, n, fit, band, logFit };
+}
+
+function annualizedPct(reg, lastFit) {
+  const perYear = reg.slope * state.barsPerYear;
+  return reg.logFit ? (Math.exp(perYear) - 1) * 100 : (perYear / lastFit) * 100;
+}
+
+function nextBusinessDays(fromSec, count, stepDays) {
+  const out = [];
+  let d = new Date(fromSec * 1000);
+  while (out.length < count) {
+    d = new Date(d.getTime() + stepDays * 86400000);
+    const day = d.getUTCDay();
+    if (stepDays > 1 || (day !== 0 && day !== 6)) out.push(Math.floor(d.getTime() / 1000));
+  }
+  return out;
+}
+
+// --- rendering --------------------------------------------------------
+const fmt = (v, d = 2) => v == null ? "—" : v.toLocaleString("en-US", { minimumFractionDigits: d, maximumFractionDigits: d });
+
+function render() {
+  const bars = state.bars;
+  if (bars.length < 10) return;
+  const look = state.lookback && state.lookback < bars.length ? state.lookback : bars.length;
+  const win = bars.slice(bars.length - look);
+  const reg = regress(win.map(b => b.close), state.logFit);
+
+  candles.setData(bars);
+  const mid = [], up = [], lo = [];
+  win.forEach((b, i) => {
+    mid.push({ time: b.time, value: reg.fit(i) });
+    up.push({ time: b.time, value: reg.band(i, 2) });
+    lo.push({ time: b.time, value: reg.band(i, -2) });
+  });
+  midLine.setData(mid); upLine.setData(up); loLine.setData(lo);
+
+  const PROJ = 30;
+  const stepDays = state.barsPerYear === 52 ? 7 : 1;
+  const future = nextBusinessDays(win[win.length - 1].time, PROJ, stepDays);
+  const pm = [mid[mid.length - 1]], pu = [up[up.length - 1]], pl = [lo[lo.length - 1]];
+  future.forEach((t, j) => {
+    const i = reg.n + j;
+    pm.push({ time: t, value: reg.fit(i) });
+    pu.push({ time: t, value: reg.band(i, 2) });
+    pl.push({ time: t, value: reg.band(i, -2) });
+  });
+  midProj.setData(pm); upProj.setData(pu); loProj.setData(pl);
+  chart.timeScale().fitContent();
+
+  // stats card
+  const last = bars[bars.length - 1].close;
+  const lastFit = reg.fit(reg.n - 1);
+  const sigmaAbs = state.logFit ? lastFit * reg.sigma : reg.sigma;
+  const z = (last - lastFit) / sigmaAbs;
+  const projPrice = reg.fit(reg.n - 1 + PROJ);
+  const trendYr = annualizedPct(reg, lastFit);
+  const zNote = z > 1.8 ? "stretched above trend" : z < -1.8 ? "stretched below trend" : z > 0 ? "above trend" : "below trend";
+  document.getElementById("stats").innerHTML = `
+    <div><span>Window</span><b>${reg.n} bars</b></div>
+    <div><span>Trend (annualized)</span><b class="${trendYr >= 0 ? "up" : "down"}">${trendYr >= 0 ? "+" : ""}${fmt(trendYr, 1)}%</b></div>
+    <div><span>Slope</span><b>${fmt(state.logFit ? lastFit * reg.slope : reg.slope, 3)} $/bar</b></div>
+    <div><span>R² (fit strength)</span><b>${fmt(reg.r2, 3)}</b></div>
+    <div><span>Channel width (±2σ)</span><b>±${fmt(2 * sigmaAbs)} $</b></div>
+    <div><span>Position in channel</span><b class="${Math.abs(z) > 1.8 ? "down" : ""}">${fmt(z, 2)}σ — ${zNote}</b></div>
+    <div><span>Trend price +${PROJ} bars</span><b>${fmt(projPrice)} $</b></div>`;
+
+  // multi-timeframe table + composite verdict
+  const windows = [20, 60, 120, 250].filter(w => w <= bars.length);
+  let score = 0, weight = 0, rowsHtml = "";
+  windows.forEach(w => {
+    const r = regress(bars.slice(bars.length - w).map(b => b.close), state.logFit);
+    const lf = r.fit(r.n - 1);
+    const pct = annualizedPct(r, lf);
+    const s = Math.sign(r.slope) * r.r2;
+    score += s * w; weight += w;
+    const dir = r.slope > 0 ? "▲" : "▼";
+    rowsHtml += `<tr><td>${w} bars</td><td class="${pct >= 0 ? "up" : "down"}">${pct >= 0 ? "+" : ""}${fmt(pct, 1)}%</td><td>${fmt(r.r2, 2)}</td><td class="${r.slope > 0 ? "up" : "down"}">${dir}</td></tr>`;
+  });
+  document.getElementById("mtf").innerHTML = rowsHtml;
+  const composite = weight ? score / weight : 0; // -1 .. +1
+  document.getElementById("pin").style.left = `${50 + composite * 50}%`;
+  const v = document.getElementById("verdict");
+  const label = composite > 0.6 ? "Strong Uptrend" : composite > 0.2 ? "Uptrend"
+    : composite < -0.6 ? "Strong Downtrend" : composite < -0.2 ? "Downtrend" : "Neutral / Rangebound";
+  v.textContent = label;
+  v.className = "verdict " + (composite > 0.2 ? "up" : composite < -0.2 ? "down" : "");
+}
+
+// --- data -------------------------------------------------------------
+async function load() {
+  const status = document.getElementById("status");
+  status.style.display = "flex"; status.textContent = "Loading…";
+  try {
+    const res = await fetch(`/api/chart?symbol=${encodeURIComponent(state.symbol)}&range=${state.range}`);
+    const data = await res.json();
+    const result = data.chart && data.chart.result && data.chart.result[0];
+    if (!result) throw new Error((data.chart && data.chart.error && data.chart.error.description) || "no data");
+    const q = result.indicators.quote[0];
+    const bars = [];
+    result.timestamp.forEach((t, i) => {
+      if (q.close[i] == null || q.open[i] == null) return;
+      bars.push({ time: t, open: q.open[i], high: q.high[i], low: q.low[i], close: q.close[i] });
+    });
+    state.bars = bars;
+    state.barsPerYear = result.meta.dataGranularity === "1wk" ? 52 : 252;
+    const meta = result.meta;
+    const prev = meta.regularMarketPreviousClose || bars[bars.length - 2].close;
+    const px = meta.regularMarketPrice || bars[bars.length - 1].close;
+    const chg = px - prev, chgPct = (chg / prev) * 100;
+    document.getElementById("quote").innerHTML = `
+      <span class="sym">${meta.symbol}</span>
+      <span class="px">${fmt(px)}</span>
+      <span class="chg ${chg >= 0 ? "up" : "down"}">${chg >= 0 ? "+" : ""}${fmt(chg)} (${chg >= 0 ? "+" : ""}${fmt(chgPct)}%)</span>
+      <span style="color:var(--muted);font-size:12px">${meta.fullExchangeName || ""} · ${meta.currency || ""}</span>`;
+    document.title = `${meta.symbol} ${fmt(px)} — invest`;
+    status.style.display = "none";
+    render();
+  } catch (e) {
+    status.textContent = `Couldn't load ${state.symbol}: ${e.message}`;
+  }
+}
+
+// --- search -----------------------------------------------------------
+const qInput = document.getElementById("q");
+const dd = document.getElementById("dd");
+let searchTimer;
+qInput.addEventListener("input", () => {
+  clearTimeout(searchTimer);
+  const q = qInput.value.trim();
+  if (!q) { dd.style.display = "none"; return; }
+  searchTimer = setTimeout(async () => {
+    const res = await fetch(`/api/search?q=${encodeURIComponent(q)}`);
+    const data = await res.json();
+    const quotes = (data.quotes || []).filter(x => x.symbol);
+    dd.innerHTML = quotes.map(x =>
+      `<div data-s="${x.symbol}"><b>${x.symbol}</b><small>${x.shortname || x.longname || ""} · ${x.exchDisp || ""}</small></div>`
+    ).join("");
+    dd.style.display = quotes.length ? "block" : "none";
+  }, 250);
+});
+qInput.addEventListener("keydown", (e) => {
+  if (e.key === "Enter" && qInput.value.trim()) {
+    state.symbol = qInput.value.trim().toUpperCase();
+    dd.style.display = "none"; qInput.blur(); load();
+  }
+});
+dd.addEventListener("click", (e) => {
+  const row = e.target.closest("[data-s]");
+  if (!row) return;
+  state.symbol = row.dataset.s;
+  qInput.value = ""; dd.style.display = "none"; load();
+});
+document.addEventListener("click", (e) => { if (!e.target.closest(".search")) dd.style.display = "none"; });
+
+// --- controls ---------------------------------------------------------
+document.querySelectorAll(".btn.range").forEach(b => b.addEventListener("click", () => {
+  document.querySelectorAll(".btn.range").forEach(x => x.classList.remove("active"));
+  b.classList.add("active"); state.range = b.dataset.r; load();
+}));
+document.querySelectorAll(".btn.look").forEach(b => b.addEventListener("click", () => {
+  document.querySelectorAll(".btn.look").forEach(x => x.classList.remove("active"));
+  b.classList.add("active"); state.lookback = +b.dataset.l; render();
+}));
+document.getElementById("logToggle").addEventListener("click", (e) => {
+  state.logFit = !state.logFit;
+  e.target.textContent = `Log fit: ${state.logFit ? "on" : "off"}`;
+  e.target.classList.toggle("active", state.logFit);
+  render();
+});
+
+load();
+</script>
+</body>
+</html>
