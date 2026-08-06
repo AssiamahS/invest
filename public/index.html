@@ -35,6 +35,8 @@
   main { display: grid; grid-template-columns: 1fr 320px; gap: 12px; padding: 12px 16px; }
   @media (max-width: 900px) { main { grid-template-columns: 1fr; } }
   #chart { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; height: 560px; position: relative; }
+  #legend { position: absolute; top: 8px; left: 10px; z-index: 10; font-size: 12px; color: var(--text); background: rgba(13,17,23,.75); padding: 4px 10px; border-radius: 6px; pointer-events: none; display: none; font-variant-numeric: tabular-nums; }
+  #legend b { color: var(--accent); }
   aside { display: flex; flex-direction: column; gap: 12px; }
   .card { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 14px; }
   .card h2 { font-size: 12px; text-transform: uppercase; letter-spacing: 1px; color: var(--muted); margin-bottom: 10px; }
@@ -47,6 +49,14 @@
   th { color: var(--muted); font-weight: 500; font-size: 12px; text-align: right; padding: 4px 2px; }
   th:first-child, td:first-child { text-align: left; }
   td { text-align: right; padding: 4px 2px; border-top: 1px solid var(--border); }
+  .wl .row { display: flex; align-items: center; gap: 8px; padding: 7px 0; border-top: 1px solid var(--border); cursor: pointer; font-variant-numeric: tabular-nums; }
+  .wl .row:first-child { border-top: none; }
+  .wl .wsym { font-weight: 700; width: 52px; }
+  .wl .wvd { font-size: 11px; flex: 1; }
+  .wl .wpx { text-align: right; }
+  .wl .wchg { width: 64px; text-align: right; font-size: 12px; }
+  .wl .rm { color: var(--muted); padding: 0 2px 0 6px; }
+  .wl .rm:hover { color: var(--down); }
   #status { position: absolute; inset: 0; display: none; align-items: center; justify-content: center; color: var(--muted); background: rgba(13,17,23,.6); z-index: 20; border-radius: 8px; }
   footer { color: var(--muted); font-size: 12px; padding: 4px 16px 16px; }
 </style>
@@ -59,15 +69,16 @@
     <div class="dropdown" id="dd"></div>
   </div>
   <div class="quote" id="quote"></div>
+  <button class="btn" id="watchBtn" style="display:none">☆ Watch</button>
   <div class="controls">
     <span class="label">Range</span>
     <button class="btn range" data-r="3mo">3M</button>
-    <button class="btn range active" data-r="1y">1Y</button>
+    <button class="btn range" data-r="1y">1Y</button>
     <button class="btn range" data-r="2y">2Y</button>
     <button class="btn range" data-r="5y">5Y</button>
     <button class="btn range" data-r="max">Max</button>
     <span class="label">Regression</span>
-    <button class="btn look active" data-l="0">Auto</button>
+    <button class="btn look" data-l="0">Auto</button>
     <button class="btn look" data-l="60">60</button>
     <button class="btn look" data-l="120">120</button>
     <button class="btn look" data-l="250">250</button>
@@ -76,12 +87,16 @@
 </header>
 
 <main>
-  <div id="chart"><div id="status">Loading…</div></div>
+  <div id="chart"><div id="legend"></div><div id="status">Loading…</div></div>
   <aside>
     <div class="card">
       <h2>Trend verdict</h2>
       <div class="meter"><div class="pin" id="pin" style="left:50%"></div></div>
       <div class="verdict" id="verdict">—</div>
+    </div>
+    <div class="card">
+      <h2>Watchlist</h2>
+      <div class="wl" id="wl"><span style="color:var(--muted)">Loading…</span></div>
     </div>
     <div class="card">
       <h2>Regression channel</h2>
@@ -100,13 +115,29 @@
 
 <script src="https://unpkg.com/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js"></script>
 <script>
-const state = { symbol: "AAPL", range: "1y", lookback: 0, logFit: false, bars: [], barsPerYear: 252 };
+const params = new URLSearchParams(location.search);
+const state = {
+  symbol: (params.get("s") || "AAPL").toUpperCase(),
+  range: params.get("r") || "1y",
+  lookback: +(params.get("l") || 0) || 0,
+  logFit: params.get("log") === "1",
+  bars: [], barsPerYear: 252, fitByTime: new Map(),
+};
+
+function syncURL() {
+  const p = new URLSearchParams();
+  if (state.symbol !== "AAPL") p.set("s", state.symbol);
+  if (state.range !== "1y") p.set("r", state.range);
+  if (state.lookback) p.set("l", state.lookback);
+  if (state.logFit) p.set("log", "1");
+  history.replaceState(null, "", p.toString() ? `?${p}` : location.pathname);
+}
 
 const chartEl = document.getElementById("chart");
 const chart = LightweightCharts.createChart(chartEl, {
   layout: { background: { color: "#151b23" }, textColor: "#7d8896" },
   grid: { vertLines: { color: "#1c232d" }, horzLines: { color: "#1c232d" } },
-  rightPriceScale: { borderColor: "#232b36" },
+  rightPriceScale: { borderColor: "#232b36", scaleMargins: { top: 0.06, bottom: 0.22 } },
   timeScale: { borderColor: "#232b36", timeVisible: false },
   crosshair: { mode: LightweightCharts.CrosshairMode.Normal },
   autoSize: true,
@@ -115,6 +146,11 @@ const candles = chart.addCandlestickSeries({
   upColor: "#26a69a", downColor: "#ef5350", borderVisible: false,
   wickUpColor: "#26a69a", wickDownColor: "#ef5350",
 });
+const volume = chart.addHistogramSeries({
+  priceScaleId: "vol", priceFormat: { type: "volume" },
+  priceLineVisible: false, lastValueVisible: false,
+});
+chart.priceScale("vol").applyOptions({ scaleMargins: { top: 0.84, bottom: 0 } });
 const lineOpts = (color, dashed) => ({
   color, lineWidth: dashed ? 1 : 2,
   lineStyle: dashed ? LightweightCharts.LineStyle.Dashed : LightweightCharts.LineStyle.Solid,
@@ -159,9 +195,28 @@ function regress(closes, logFit) {
   return { slope, intercept, sigma, r2, n, fit, band, logFit };
 }
 
-function annualizedPct(reg, lastFit) {
-  const perYear = reg.slope * state.barsPerYear;
+function annualizedPct(reg, lastFit, barsPerYear) {
+  const perYear = reg.slope * barsPerYear;
   return reg.logFit ? (Math.exp(perYear) - 1) * 100 : (perYear / lastFit) * 100;
+}
+
+// 20/60/120/250-bar regressions → per-window rows + composite score in [-1, 1]
+function compositeScore(bars, logFit, barsPerYear) {
+  const windows = [20, 60, 120, 250].filter(w => w <= bars.length);
+  let score = 0, weight = 0;
+  const rows = windows.map(w => {
+    const r = regress(bars.slice(bars.length - w).map(b => b.close), logFit);
+    const pct = annualizedPct(r, r.fit(r.n - 1), barsPerYear);
+    score += Math.sign(r.slope) * r.r2 * w;
+    weight += w;
+    return { w, pct, r2: r.r2, isUp: r.slope > 0 };
+  });
+  return { composite: weight ? score / weight : 0, rows };
+}
+
+function verdictLabel(c) {
+  return c > 0.6 ? "Strong Uptrend" : c > 0.2 ? "Uptrend"
+    : c < -0.6 ? "Strong Downtrend" : c < -0.2 ? "Downtrend" : "Neutral";
 }
 
 function nextBusinessDays(fromSec, count, stepDays) {
@@ -186,9 +241,18 @@ function render() {
   const reg = regress(win.map(b => b.close), state.logFit);
 
   candles.setData(bars);
+  volume.setData(bars.map(b => ({
+    time: b.time, value: b.vol || 0,
+    color: b.close >= b.open ? "rgba(38,166,154,.35)" : "rgba(239,83,80,.35)",
+  })));
+
   const mid = [], up = [], lo = [];
+  state.fitByTime = new Map();
   win.forEach((b, i) => {
-    mid.push({ time: b.time, value: reg.fit(i) });
+    const f = reg.fit(i);
+    const sigmaAbs = state.logFit ? f * reg.sigma : reg.sigma;
+    state.fitByTime.set(b.time, { fit: f, z: sigmaAbs ? (b.close - f) / sigmaAbs : 0 });
+    mid.push({ time: b.time, value: f });
     up.push({ time: b.time, value: reg.band(i, 2) });
     lo.push({ time: b.time, value: reg.band(i, -2) });
   });
@@ -213,7 +277,7 @@ function render() {
   const sigmaAbs = state.logFit ? lastFit * reg.sigma : reg.sigma;
   const z = (last - lastFit) / sigmaAbs;
   const projPrice = reg.fit(reg.n - 1 + PROJ);
-  const trendYr = annualizedPct(reg, lastFit);
+  const trendYr = annualizedPct(reg, lastFit, state.barsPerYear);
   const zNote = z > 1.8 ? "stretched above trend" : z < -1.8 ? "stretched below trend" : z > 0 ? "above trend" : "below trend";
   document.getElementById("stats").innerHTML = `
     <div><span>Window</span><b>${reg.n} bars</b></div>
@@ -225,45 +289,50 @@ function render() {
     <div><span>Trend price +${PROJ} bars</span><b>${fmt(projPrice)} $</b></div>`;
 
   // multi-timeframe table + composite verdict
-  const windows = [20, 60, 120, 250].filter(w => w <= bars.length);
-  let score = 0, weight = 0, rowsHtml = "";
-  windows.forEach(w => {
-    const r = regress(bars.slice(bars.length - w).map(b => b.close), state.logFit);
-    const lf = r.fit(r.n - 1);
-    const pct = annualizedPct(r, lf);
-    const s = Math.sign(r.slope) * r.r2;
-    score += s * w; weight += w;
-    const dir = r.slope > 0 ? "▲" : "▼";
-    rowsHtml += `<tr><td>${w} bars</td><td class="${pct >= 0 ? "up" : "down"}">${pct >= 0 ? "+" : ""}${fmt(pct, 1)}%</td><td>${fmt(r.r2, 2)}</td><td class="${r.slope > 0 ? "up" : "down"}">${dir}</td></tr>`;
-  });
-  document.getElementById("mtf").innerHTML = rowsHtml;
-  const composite = weight ? score / weight : 0; // -1 .. +1
+  const { composite, rows } = compositeScore(bars, state.logFit, state.barsPerYear);
+  document.getElementById("mtf").innerHTML = rows.map(r =>
+    `<tr><td>${r.w} bars</td><td class="${r.pct >= 0 ? "up" : "down"}">${r.pct >= 0 ? "+" : ""}${fmt(r.pct, 1)}%</td><td>${fmt(r.r2, 2)}</td><td class="${r.isUp ? "up" : "down"}">${r.isUp ? "▲" : "▼"}</td></tr>`
+  ).join("");
   document.getElementById("pin").style.left = `${50 + composite * 50}%`;
   const v = document.getElementById("verdict");
-  const label = composite > 0.6 ? "Strong Uptrend" : composite > 0.2 ? "Uptrend"
-    : composite < -0.6 ? "Strong Downtrend" : composite < -0.2 ? "Downtrend" : "Neutral / Rangebound";
-  v.textContent = label;
+  v.textContent = verdictLabel(composite);
   v.className = "verdict " + (composite > 0.2 ? "up" : composite < -0.2 ? "down" : "");
 }
 
+// crosshair legend: OHLC + trend fair-value + z at the hovered bar
+chart.subscribeCrosshairMove((p) => {
+  const legend = document.getElementById("legend");
+  if (!p.time || !p.seriesData.has(candles)) { legend.style.display = "none"; return; }
+  const c = p.seriesData.get(candles);
+  const f = state.fitByTime.get(p.time);
+  legend.innerHTML =
+    `O ${fmt(c.open)}  H ${fmt(c.high)}  L ${fmt(c.low)}  C ${fmt(c.close)}` +
+    (f ? `  ·  trend <b>${fmt(f.fit)}</b>  ·  <span class="${Math.abs(f.z) > 1.8 ? "down" : ""}">${f.z >= 0 ? "+" : ""}${fmt(f.z, 2)}σ</span>` : "");
+  legend.style.display = "block";
+});
+
 // --- data -------------------------------------------------------------
+async function fetchChart(symbol, range) {
+  const res = await fetch(`/api/chart?symbol=${encodeURIComponent(symbol)}&range=${range}`);
+  const data = await res.json();
+  const result = data.chart && data.chart.result && data.chart.result[0];
+  if (!result) throw new Error((data.chart && data.chart.error && data.chart.error.description) || "no data");
+  const q = result.indicators.quote[0];
+  const bars = [];
+  result.timestamp.forEach((t, i) => {
+    if (q.close[i] == null || q.open[i] == null) return;
+    bars.push({ time: t, open: q.open[i], high: q.high[i], low: q.low[i], close: q.close[i], vol: q.volume ? q.volume[i] : 0 });
+  });
+  return { bars, meta: result.meta };
+}
+
 async function load() {
   const status = document.getElementById("status");
   status.style.display = "flex"; status.textContent = "Loading…";
   try {
-    const res = await fetch(`/api/chart?symbol=${encodeURIComponent(state.symbol)}&range=${state.range}`);
-    const data = await res.json();
-    const result = data.chart && data.chart.result && data.chart.result[0];
-    if (!result) throw new Error((data.chart && data.chart.error && data.chart.error.description) || "no data");
-    const q = result.indicators.quote[0];
-    const bars = [];
-    result.timestamp.forEach((t, i) => {
-      if (q.close[i] == null || q.open[i] == null) return;
-      bars.push({ time: t, open: q.open[i], high: q.high[i], low: q.low[i], close: q.close[i] });
-    });
+    const { bars, meta } = await fetchChart(state.symbol, state.range);
     state.bars = bars;
-    state.barsPerYear = result.meta.dataGranularity === "1wk" ? 52 : 252;
-    const meta = result.meta;
+    state.barsPerYear = meta.dataGranularity === "1wk" ? 52 : 252;
     const prev = meta.regularMarketPreviousClose || bars[bars.length - 2].close;
     const px = meta.regularMarketPrice || bars[bars.length - 1].close;
     const chg = px - prev, chgPct = (chg / prev) * 100;
@@ -274,11 +343,73 @@ async function load() {
       <span style="color:var(--muted);font-size:12px">${meta.fullExchangeName || ""} · ${meta.currency || ""}</span>`;
     document.title = `${meta.symbol} ${fmt(px)} — invest`;
     status.style.display = "none";
+    syncURL();
+    updateWatchBtn();
     render();
   } catch (e) {
     status.textContent = `Couldn't load ${state.symbol}: ${e.message}`;
   }
 }
+
+// --- watchlist --------------------------------------------------------
+const WL_KEY = "invest.watchlist";
+function getWL() {
+  try {
+    const v = JSON.parse(localStorage.getItem(WL_KEY));
+    if (Array.isArray(v)) return v;
+  } catch {}
+  return ["AAPL", "NVDA", "TSLA", "SPY"];
+}
+function setWL(list) { localStorage.setItem(WL_KEY, JSON.stringify(list)); }
+
+function updateWatchBtn() {
+  const btn = document.getElementById("watchBtn");
+  btn.style.display = "";
+  const watched = getWL().includes(state.symbol);
+  btn.textContent = watched ? "★ Watching" : "☆ Watch";
+  btn.classList.toggle("active", watched);
+}
+
+async function renderWatchlist() {
+  const el = document.getElementById("wl");
+  const list = getWL();
+  if (!list.length) { el.innerHTML = `<span style="color:var(--muted)">Empty — hit ☆ Watch on a symbol.</span>`; return; }
+  const results = await Promise.all(list.map(async (sym) => {
+    try {
+      const { bars, meta } = await fetchChart(sym, "1y");
+      const { composite } = compositeScore(bars, false, 252);
+      const px = meta.regularMarketPrice || bars[bars.length - 1].close;
+      const prev = meta.regularMarketPreviousClose || bars[bars.length - 2].close;
+      return { sym, px, chgPct: ((px - prev) / prev) * 100, composite };
+    } catch { return { sym, px: null, chgPct: null, composite: 0 }; }
+  }));
+  el.innerHTML = results.map(r => {
+    const cls = r.composite > 0.2 ? "up" : r.composite < -0.2 ? "down" : "";
+    return `<div class="row" data-s="${r.sym}">
+      <span class="wsym">${r.sym}</span>
+      <span class="wvd ${cls}">${r.px == null ? "no data" : verdictLabel(r.composite)}</span>
+      <span class="wpx">${fmt(r.px)}</span>
+      <span class="wchg ${r.chgPct >= 0 ? "up" : "down"}">${r.chgPct == null ? "" : (r.chgPct >= 0 ? "+" : "") + fmt(r.chgPct, 1) + "%"}</span>
+      <span class="rm" data-rm="${r.sym}" title="Remove">✕</span>
+    </div>`;
+  }).join("");
+}
+
+document.getElementById("wl").addEventListener("click", (e) => {
+  const rm = e.target.closest("[data-rm]");
+  if (rm) {
+    setWL(getWL().filter(s => s !== rm.dataset.rm));
+    updateWatchBtn(); renderWatchlist();
+    return;
+  }
+  const row = e.target.closest("[data-s]");
+  if (row) { state.symbol = row.dataset.s; load(); }
+});
+document.getElementById("watchBtn").addEventListener("click", () => {
+  const list = getWL();
+  setWL(list.includes(state.symbol) ? list.filter(s => s !== state.symbol) : [...list, state.symbol].slice(0, 12));
+  updateWatchBtn(); renderWatchlist();
+});
 
 // --- search -----------------------------------------------------------
 const qInput = document.getElementById("q");
@@ -313,22 +444,32 @@ dd.addEventListener("click", (e) => {
 document.addEventListener("click", (e) => { if (!e.target.closest(".search")) dd.style.display = "none"; });
 
 // --- controls ---------------------------------------------------------
-document.querySelectorAll(".btn.range").forEach(b => b.addEventListener("click", () => {
-  document.querySelectorAll(".btn.range").forEach(x => x.classList.remove("active"));
-  b.classList.add("active"); state.range = b.dataset.r; load();
-}));
-document.querySelectorAll(".btn.look").forEach(b => b.addEventListener("click", () => {
-  document.querySelectorAll(".btn.look").forEach(x => x.classList.remove("active"));
-  b.classList.add("active"); state.lookback = +b.dataset.l; render();
-}));
-document.getElementById("logToggle").addEventListener("click", (e) => {
+document.querySelectorAll(".btn.range").forEach(b => {
+  b.classList.toggle("active", b.dataset.r === state.range);
+  b.addEventListener("click", () => {
+    document.querySelectorAll(".btn.range").forEach(x => x.classList.remove("active"));
+    b.classList.add("active"); state.range = b.dataset.r; load();
+  });
+});
+document.querySelectorAll(".btn.look").forEach(b => {
+  b.classList.toggle("active", +b.dataset.l === state.lookback);
+  b.addEventListener("click", () => {
+    document.querySelectorAll(".btn.look").forEach(x => x.classList.remove("active"));
+    b.classList.add("active"); state.lookback = +b.dataset.l; syncURL(); render();
+  });
+});
+const logBtn = document.getElementById("logToggle");
+logBtn.textContent = `Log fit: ${state.logFit ? "on" : "off"}`;
+logBtn.classList.toggle("active", state.logFit);
+logBtn.addEventListener("click", () => {
   state.logFit = !state.logFit;
-  e.target.textContent = `Log fit: ${state.logFit ? "on" : "off"}`;
-  e.target.classList.toggle("active", state.logFit);
-  render();
+  logBtn.textContent = `Log fit: ${state.logFit ? "on" : "off"}`;
+  logBtn.classList.toggle("active", state.logFit);
+  syncURL(); render();
 });
 
 load();
+renderWatchlist();
 </script>
 </body>
 </html>
