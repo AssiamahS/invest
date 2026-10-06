@@ -27,3 +27,27 @@ wrangler deploy   # ship
 ```
 
 Data is delayed and cached ~2 minutes at the edge. Not financial advice.
+
+## invest MCP (Claude Code)
+
+`mcp/server.mjs` exposes the same engine to Claude as seven read-only tools that
+return structured JSON: `analyze_stock`, `scan_market`, `project_stock`,
+`compare_stocks`, `get_watchlist`, `get_market_context`, `show_chart`. No tool
+can place or simulate an order.
+
+```sh
+npm install
+claude mcp add invest -- node /path/to/invest/mcp/server.mjs
+```
+
+## Backtest — read this before trusting a setup
+
+`node backtest/run.mjs` walks 5 years of daily bars across 72 symbols with no
+lookahead. Out-of-sample (2024-10 → 2026-10) **no setup beat a random long on
+the same stocks**; long setups only captured market drift and every short setup
+lost money, so shorts are demoted and only longs get a trade plan. Details in
+`backtest/REPORT.md`; the engine audit is in `AUDIT.md`.
+
+## Tests
+
+`npm test` — 75 tests (math, indicators, paper book, adversarial edge cases, MCP over stdio; some hit live Yahoo).
