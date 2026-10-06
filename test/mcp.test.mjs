@@ -11,7 +11,7 @@ import { getFundamentals } from "../src/worker.js";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const LIVE = { timeout: 120_000 };
-const EXPECTED_TOOLS = ["analyze_stock", "compare_stocks", "get_market_context", "get_watchlist", "project_stock", "scan_market", "show_chart"];
+const EXPECTED_TOOLS = ["analyze_stock", "compare_stocks", "get_market_context", "get_watchlist", "glossary", "project_stock", "scan_market", "show_chart"];
 const MUTATING = /order|trade|buy|sell|close|add|remove/i;
 
 let client;
@@ -182,4 +182,18 @@ test("show_chart only returns a URL unless asked to open", async () => {
   const r = await call("show_chart", { symbol: "meli" });
   assert.ok(!r.isError);
   assert.deepEqual(r.structuredContent, { symbol: "MELI", url: "http://127.0.0.1:8811/?s=MELI", opened: false });
+});
+
+test("glossary defines terms and the teach_chart prompt is offered", async () => {
+  const bps = await call("glossary", { term: "bps" });
+  assert.ok(!bps.isError);
+  assert.match(bps.structuredContent.terms[0].definition, /0\.01%/);
+  const all = await call("glossary", {});
+  assert.ok(all.structuredContent.terms.length >= 15);
+  const nope = await call("glossary", { term: "unicorn" });
+  assert.equal(nope.isError, true);
+  const { prompts } = await client.listPrompts();
+  assert.ok(prompts.some((p) => p.name === "teach_chart"));
+  const p = await client.getPrompt({ name: "teach_chart", arguments: { symbol: "t" } });
+  assert.match(p.messages[0].content.text, /trading teacher for T\b/);
 });

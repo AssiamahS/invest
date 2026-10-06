@@ -19,6 +19,7 @@ import { channelSetup, compositeScore, project } from "../public/lib/analysis.js
 import { sma, rsi, pctChange } from "../public/lib/indicators.js";
 import { LISTS } from "../public/lib/lists.js";
 import { getWatchlist } from "../src/watchlist.mjs";
+import { GLOSSARY } from "../public/lib/glossary.js";
 
 const TERMINAL_URL = process.env.INVEST_URL || "http://127.0.0.1:8811";
 const WATCHLIST_PATH = process.env.INVEST_WATCHLIST || join(homedir(), ".invest", "watchlist.json");
@@ -453,6 +454,41 @@ server.registerTool("show_chart", {
   const url = `${TERMINAL_URL}/?s=${encodeURIComponent(sym)}`;
   if (open) execFile("open", [url]);
   return { symbol: sym, url, opened: !!open };
+}));
+
+server.registerTool("glossary", {
+  title: "Glossary",
+  description: "Plain-English definitions of the terms these tools return (bar, lookback, regression, channel, sigma, z, r2, slope, composite, atr, stop, target, rr, bps, volume, pe, backtest, support). Omit term to list them all. Use when teaching.",
+  inputSchema: { term: z.string().optional() },
+  outputSchema: { terms: z.array(z.object({ key: z.string(), name: z.string(), definition: z.string() })) },
+  annotations: { ...READ_ONLY, openWorldHint: false },
+}, guarded(async ({ term }) => {
+  const q = (term || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+  const all = Object.entries(GLOSSARY).map(([key, [name, definition]]) => ({ key, name, definition }));
+  const hits = q ? all.filter((t) => t.key === q || t.name.toLowerCase().replace(/[^a-z0-9]/g, "").includes(q)) : all;
+  if (!hits.length) throw new Error(`no glossary entry for "${term}"; have: ${Object.keys(GLOSSARY).join(", ")}`);
+  return { terms: hits };
+}));
+
+// Teacher mode for any MCP host: same persona as the web Coach's Ask Claude.
+server.registerPrompt("teach_chart", {
+  title: "Teach me this chart",
+  description: "Coach mode: read a ticker's chart with the student, define every term, ask what they think before giving a lean, then quiz them.",
+  argsSchema: { symbol: z.string() },
+}, ({ symbol }) => ({
+  messages: [{
+    role: "user",
+    content: {
+      type: "text",
+      text: `Be my trading teacher for ${symbol.toUpperCase()}. Call analyze_stock (and glossary for any term I might not know), then:
+1. Tell me the single most important thing on the chart in plain words, defining jargon (bar, lookback, σ, z, R², ATR, bps) the first time.
+2. Walk the 20/60/120/250-bar timeframes and say where they agree or disagree.
+3. Ask me what I think it does over the next 20 bars and WHY — wait for my answer.
+4. After I answer, give the bull case, the bear case, your lean, and what would prove it wrong. Mention setup.edge (the backtest found no proven edge).
+5. Finish with one multiple-choice pop-quiz question on this chart and wait for my answer.
+Use only numbers from the tools. Education, not financial advice.`,
+    },
+  }],
 }));
 
 await server.connect(new StdioServerTransport());
