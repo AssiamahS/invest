@@ -201,16 +201,52 @@ function guess(dir) {
     <button class="btn" id="predictStart">Play again</button>`;
 }
 
-// ---------------------------------------------------------------- Ask Claude
+// ---------------------------------------------------------------- Claude terminal
+// On the Mac the Ask tab is a real slyTerm chat (ttyd → tmux window "invest",
+// claude with tools + the invest MCP). Buttons type into it with the chart
+// context attached. Anywhere else (hosted page, ttyd down) it falls back to
+// the one-shot chat below.
+const API_HEADERS = { "Content-Type": "application/json", "X-Invest": "1" };
+let liveTerm = null; // { url } once the terminal is live
+async function initTerm() {
+  if (liveTerm) return liveTerm;
+  try {
+    const st = await (await fetch("/api/term/status", { method: "POST", headers: API_HEADERS })).json();
+    if (!st.ttyd) return null;
+    liveTerm = { url: st.url };
+    $("#termFrame").src = st.url;
+    $("#coachTerm").style.display = "block";
+    $("#coachQuick").style.display = "none";
+    return liveTerm;
+  } catch { return null; }
+}
+function chartContext() {
+  const st = H.state, s = A?.setup;
+  const head = `[invest chart] ${st.symbol} · range ${st.range} · ${st.lookback || "auto"}-bar channel`;
+  return s ? `${head} · price ${fmt(A.price)} · z ${fmt(s.z)} · R² ${fmt(s.r2)} · ${s.setup} (${s.bias}) · verdict ${s.verdict}.` : `${head}.`;
+}
+async function termAsk(question) {
+  const text = `${chartContext()} Use the invest MCP (hub server=invest: analyze_stock, glossary, compare_stocks, get_market_context) for real numbers and teach me like a patient teacher: define jargon, ask what I think before giving your lean, mention setup.edge. ${question}`;
+  for (let i = 0; i < 20; i++) { // a brand-new chat needs a few seconds before tmux has the window
+    const r = await (await fetch("/api/term/send", { method: "POST", headers: API_HEADERS, body: JSON.stringify({ text }) })).json();
+    if (r.ok) { $("#termFrame").focus(); return; }
+    if (!/no invest chat/.test(r.error || "")) return toast(`Couldn't type into Claude: ${r.error}`);
+    await new Promise((res) => setTimeout(res, 1000));
+  }
+  toast("The invest chat didn't start — check the terminal tab.");
+}
+
+// ---------------------------------------------------------------- one-shot fallback
 const history = [];
 async function ask(text) {
   if (!text.trim()) return;
   setTab("ask");
+  if (await initTerm()) return termAsk(text);
   history.push({ role: "user", content: text });
   drawChat(true);
   try {
     const r = await fetch("/api/claude", {
-      method: "POST", headers: { "Content-Type": "application/json" },
+      method: "POST", headers: API_HEADERS,
       body: JSON.stringify({ messages: history, symbol: H.state.symbol, lookback: H.state.lookback || 120, mode: "teacher" }),
     });
     const d = await r.json();
@@ -233,6 +269,7 @@ function setTab(name) {
   document.querySelectorAll(".ctab").forEach((b) => b.classList.toggle("active", b.dataset.tab === name));
   document.querySelectorAll(".cpane").forEach((p) => (p.style.display = p.dataset.pane === name ? "block" : "none"));
   store.set("invest.coachTab", name);
+  if (name === "ask") initTerm();
 }
 
 $("#coach").addEventListener("click", (e) => {

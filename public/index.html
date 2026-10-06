@@ -122,7 +122,7 @@
       <button class="btn ctab" data-tab="explain">Explain</button>
       <button class="btn ctab" data-tab="quiz">Pop quiz</button>
       <button class="btn ctab" data-tab="predict">Predict</button>
-      <button class="btn ctab" data-tab="ask">Ask Claude</button>
+      <button class="btn ctab" data-tab="ask">Claude terminal</button>
       <button class="btn ctab" data-tab="terms">Glossary</button>
     </div>
     <div class="cpane" data-pane="explain"><div id="coachExplain"><p class="muted">Reading the chart…</p></div>
@@ -132,6 +132,16 @@
       <p>Train your eye: the chart freezes on a random past day and hides what came next. You call it, then it reveals the next 20 bars and how the engine's read did.</p>
       <button class="btn" id="predictStart">Start a round</button></div></div>
     <div class="cpane" data-pane="ask">
+      <div id="coachTerm" style="display:none">
+        <div class="row" style="margin:0 0 8px">
+          <button class="btn active" data-ask="Read this chart with me like a teacher. Start with the single most important thing.">Send this chart</button>
+          <button class="btn" data-ask="What do you think happens next? Bull case, bear case, then ask me what I think before giving your lean.">What happens next?</button>
+          <button class="btn" data-ask="Quiz me with one multiple-choice question about this chart and wait for my answer.">Quiz me</button>
+          <span class="muted" id="termNote">Live Claude Code chat "invest" — also a tab in slyTerm.</span>
+        </div>
+        <iframe id="termFrame" title="Claude terminal" style="width:100%;height:560px;border:1px solid var(--border);border-radius:6px;background:#000"></iframe>
+      </div>
+      <div id="coachQuick">
       <div id="coachChat"><div class="msg assistant">Ask me anything about this chart: "what's a basis point?", "what do you think it does next?", "quiz me". I'll answer from the engine's numbers and ask you a question back.</div></div>
       <div class="row" style="margin:0 0 8px">
         <button class="btn" data-ask="Explain this chart to me like a teacher. Start with the single most important thing.">Explain this chart</button>
@@ -139,6 +149,7 @@
         <button class="btn" data-ask="Quiz me with one question about this chart. Wait for my answer before revealing it.">Quiz me</button>
       </div>
       <form id="coachForm"><input id="coachInput" placeholder="Ask Claude about this chart…" autocomplete="off"><button class="btn active">Send</button></form>
+      </div>
     </div>
     <div class="cpane" data-pane="terms"><p class="muted">Tap any term. These are also underlined inside the explanations.</p><div id="coachGlossary"></div></div>
     <div id="coachDef"></div>

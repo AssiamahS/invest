@@ -7,7 +7,7 @@ import { createServer } from "node:http";
 import { readFile } from "node:fs/promises";
 import { extname, join, normalize } from "node:path";
 import { fileURLToPath } from "node:url";
-import { spawn } from "node:child_process";
+import { spawn, execFile } from "node:child_process";
 import { handleApi, analyze, getBars } from "./src/worker.js";
 import { channelSetup } from "./public/lib/analysis.js";
 
@@ -67,11 +67,55 @@ function claudeTeach({ messages = [], symbol, lookback }) {
   });
 }
 
+// The chart's Claude terminal is a real slyTerm chat: tmux window "invest" in
+// the slywatch group, served by slyTerm's ttyd (127.0.0.1:7681, ?arg=invest).
+// The page embeds it; these helpers let chart buttons type into it.
+const TERM_WINDOW = "=slywatch:invest";
+const tmux = (...args) => new Promise((resolve) =>
+  execFile("tmux", args, { timeout: 5000 }, (e, out) => resolve(e ? null : String(out))));
+
+async function termSend(text) {
+  if (await tmux("has-session", "-t", TERM_WINDOW) === null) throw new Error("no invest chat yet — open the Claude terminal tab first");
+  await tmux("send-keys", "-t", TERM_WINDOW, "-l", text.replace(/\s*\n\s*/g, " ").slice(0, 2000));
+  await tmux("send-keys", "-t", TERM_WINDOW, "Enter");
+}
+
+// The terminal runs claude with --dangerously-skip-permissions, so a random web
+// page must never be able to type into it: same-origin + a custom header (which
+// forces a CORS preflight this server never approves).
+function trusted(req) {
+  const origin = req.headers.origin;
+  return req.headers["x-invest"] === "1" && (!origin || origin === `http://127.0.0.1:${PORT}` || origin === `http://localhost:${PORT}`);
+}
+
 const TYPES = { ".html": "text/html; charset=utf-8", ".js": "text/javascript", ".css": "text/css", ".json": "application/json", ".svg": "image/svg+xml", ".png": "image/png" };
 
 createServer(async (req, res) => {
   const url = new URL(req.url, `http://127.0.0.1:${PORT}`);
   try {
+    if (url.pathname.startsWith("/api/term/") || url.pathname === "/api/claude") {
+      if (req.method !== "POST" || !trusted(req)) {
+        res.writeHead(403, { "Content-Type": "application/json" });
+        return res.end(JSON.stringify({ error: "forbidden" }));
+      }
+    }
+    if (url.pathname === "/api/term/status") {
+      const ttyd = await fetch("http://127.0.0.1:7681/").then((r) => r.ok).catch(() => false);
+      const chat = (await tmux("has-session", "-t", TERM_WINDOW)) !== null;
+      res.writeHead(200, { "Content-Type": "application/json" });
+      return res.end(JSON.stringify({ ttyd, chat, url: "http://127.0.0.1:7681/?arg=invest" }));
+    }
+    if (url.pathname === "/api/term/send") {
+      const chunks = [];
+      for await (const c of req) chunks.push(c);
+      let text = "";
+      try { text = String(JSON.parse(Buffer.concat(chunks).toString()).text || ""); } catch {}
+      res.writeHead(200, { "Content-Type": "application/json" });
+      if (!text.trim()) return res.end(JSON.stringify({ error: "empty" }));
+      try { await termSend(text); res.end(JSON.stringify({ ok: true })); }
+      catch (e) { res.end(JSON.stringify({ error: e.message })); }
+      return;
+    }
     if (url.pathname === "/api/claude" && req.method === "POST") {
       const chunks = [];
       for await (const c of req) chunks.push(c);
